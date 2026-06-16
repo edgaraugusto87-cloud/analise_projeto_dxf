@@ -12,6 +12,8 @@ import re
 import tempfile
 from pathlib import Path
 
+import io
+
 import ezdxf
 import ezdxf.recover
 from ezdxf.addons import iterdxf
@@ -288,7 +290,7 @@ def extrair_fatos(conteudo: bytes, nome_arquivo: str = "arquivo.dxf") -> tuple[d
 
     # Modo normal
     try:
-        doc, audit = ezdxf.recover.readbytes(conteudo)
+        doc, audit = ezdxf.recover.read(io.BytesIO(conteudo))
         if audit.has_errors:
             msg = (
                 f"DXF com {len(audit.errors)} erro(s) de integridade: "
