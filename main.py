@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadF
 from fastapi.responses import JSONResponse
 
 from analise import DEFAULT_MODEL, chamar_claude, montar_conteudo
+from cache import buscar, calcular_chave, metadados, salvar
 from extrator_dxf import extrair_fatos
 
 # ── Segurança ─────────────────────────────────────────────────────────────────
@@ -31,7 +32,7 @@ def verificar_chave(x_api_key: Annotated[str | None, Header()] = None):
 app = FastAPI(
     title="Agente MUD Engenharia",
     description="Analisa projetos de obra e prepara a visita técnica.",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 
@@ -79,16 +80,17 @@ async def analisar(
     avisos_gerais: list[str] = []
     fatos_por_arquivo: list[dict] = []
     blocos_multimodal: list[dict] = []
+    arquivos_bytes: list[bytes] = []
 
     # Rastreia extensões para evitar redundância visual (PNG + PDF do mesmo desenho)
     tem_pdf = any(f.filename.lower().endswith(".pdf") for f in arquivos)
     tem_png = any(f.filename.lower().endswith(".png") for f in arquivos)
-    # Se tiver PDF e PNG, prefere PDF (maior fidelidade) e pula o PNG
     pular_png = tem_pdf and tem_png
 
     for arquivo in arquivos:
         nome = arquivo.filename.lower()
         conteudo = await arquivo.read()
+        arquivos_bytes.append(conteudo)
 
         if nome.endswith(".dxf"):
             fatos, avisos = extrair_fatos(conteudo, arquivo.filename)
@@ -133,7 +135,19 @@ async def analisar(
             detail={"erro": "Nenhum arquivo válido recebido (DXF, PNG, PDF)."},
         )
 
-    # Monta o prompt e chama o Claude
+    # ── Cache ─────────────────────────────────────────────────────────────────
+    chave = calcular_chave(arquivos_bytes, ctx)
+    resultado_cache = buscar(chave)
+    if resultado_cache is not None:
+        meta = metadados(chave)
+        resultado_cache.setdefault("avisos", [])
+        resultado_cache["avisos"] = (
+            [f"Resposta servida do cache (gerada em {meta.get('criado_em', '?')})."]
+            + resultado_cache["avisos"]
+        )
+        return JSONResponse(content=resultado_cache)
+
+    # ── Chamada ao Claude ─────────────────────────────────────────────────────
     conteudo_msg = montar_conteudo(ctx, fatos_por_arquivo, blocos_multimodal)
 
     try:
@@ -141,8 +155,11 @@ async def analisar(
     except Exception as e:
         raise HTTPException(status_code=502, detail={"erro": f"Falha na chamada ao Claude: {e}"})
 
-    # Injeta avisos de infraestrutura nos avisos do resultado
+    # Injeta avisos de infraestrutura
     avisos_claude = resultado.get("avisos", [])
     resultado["avisos"] = avisos_gerais + avisos_claude
+
+    # Salva no cache (falha silenciosa)
+    salvar(chave, resultado)
 
     return JSONResponse(content=resultado)

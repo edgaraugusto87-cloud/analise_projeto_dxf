@@ -69,8 +69,31 @@ Responda com este JSON e NADA MAIS (sem cercas de código, sem texto externo):
       "resposta": ""
     }
   ],
+  "dossie_obra_atualizado": "<dossiê reescrito e consolidado — mesmo porte, não maior>",
   "avisos": []
 }
+"""
+
+_INSTRUCAO_DOSSIE = """\
+
+DOSSIÊ DA OBRA (memória de continuidade entre pranchas):
+Use o dossiê como ponto de partida do seu raciocínio. Não recomece do zero, \
+não repita o que já está estabelecido, não contradiga premissas anteriores sem \
+sinalizar a mudança explicitamente.
+
+REGRAS DO DOSSIÊ:
+- O dossiê NÃO gera itens. Itens vêm apenas do projeto que você está analisando agora.
+- O dossiê impede repetir dúvidas já levantadas; não cria dúvidas novas.
+- Ao final, reescreva o dossiê de forma consolidada no campo dossie_obra_atualizado. \
+Mesmo porte — não acumule texto, consolide: incorpore o que este projeto esclareceu, \
+atualize o que mudou, remova o que ficou obsoleto.
+
+Estrutura do dossiê reescrito (seções curtas):
+1. Identificação e natureza: o que é a obra, tipo, cliente, escopo geral entendido.
+2. Premissas assumidas: o que está sendo assumido na ausência de informação (e a base).
+3. O que já está claro: fatos consolidados das pranchas já analisadas.
+4. O que ainda falta / em aberto: lacunas de entendimento (NÃO é lista de itens).
+5. Pranchas/disciplinas já analisadas: quais documentos já entraram.
 """
 
 
@@ -91,8 +114,17 @@ def montar_conteudo(
     diretrizes: list[str] = contexto.get("diretrizes", [])
     itens_pendentes: list[dict] = contexto.get("itens_pendentes", [])
     planilha_escopo: str = contexto.get("planilha_escopo", "")
+    dossie_obra: str = contexto.get("dossie_obra", "")
 
     partes: list[str] = [_INSTRUCAO_BASE]
+
+    if dossie_obra:
+        partes.append(f"{_INSTRUCAO_DOSSIE}\nDOSSIÊ ATUAL DA OBRA:\n{dossie_obra}")
+    else:
+        partes.append(
+            "\nDOSSIÊ DA OBRA: Esta é a primeira prancha analisada. "
+            "Construa o dossiê inicial no campo dossie_obra_atualizado."
+        )
 
     if diretrizes:
         partes.append(
