@@ -6,7 +6,7 @@ Endpoints: GET /health | POST /extrair-dxf | POST /analisar
 import base64
 import json
 import os
-from typing import Annotated
+from typing import Annotated, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from analise import DEFAULT_MODEL, chamar_claude, montar_conteudo
 from cache import buscar, calcular_chave, metadados, salvar
 from extrator_dxf import extrair_fatos
+from extrator_xlsx import extrair_planilha
 
 # ── Segurança ─────────────────────────────────────────────────────────────────
 
@@ -27,12 +28,20 @@ def verificar_chave(x_api_key: Annotated[str | None, Header()] = None):
         raise HTTPException(status_code=401, detail={"erro": "nao autorizado"})
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _termina_com(nome: str, *sufixos: str) -> bool:
+    """Detecção de tipo robusta a extensões duplas (ex: arquivo.dxf.dxf)."""
+    n = nome.lower()
+    return any(n.endswith(s) for s in sufixos)
+
+
 # ── App ───────────────────────────────────────────────────────────────────────
 
 app = FastAPI(
     title="Agente MUD Engenharia",
     description="Analisa projetos de obra e prepara a visita técnica.",
-    version="1.1.0",
+    version="1.2.0",
 )
 
 
@@ -47,11 +56,8 @@ def health():
 
 @app.post("/extrair-dxf", dependencies=[Depends(verificar_chave)])
 async def extrair_dxf(arquivo: UploadFile = File(...)):
-    """
-    Extrai os fatos crus de um arquivo DXF sem chamar o Claude.
-    Útil para testes e reuso pelo Make.
-    """
-    if not arquivo.filename.lower().endswith(".dxf"):
+    """Extrai fatos crus de um DXF sem chamar o Claude. Útil para testes."""
+    if not _termina_com(arquivo.filename, ".dxf"):
         raise HTTPException(status_code=400, detail={"erro": "Envie um arquivo .dxf"})
 
     conteudo = await arquivo.read()
@@ -63,14 +69,19 @@ async def extrair_dxf(arquivo: UploadFile = File(...)):
 
 @app.post("/analisar", dependencies=[Depends(verificar_chave)])
 async def analisar(
-    arquivos: list[UploadFile] = File(...),
     contexto: str = Form(...),
+    arquivo_dxf: Optional[UploadFile] = File(default=None),
+    arquivo_pdf: Optional[UploadFile] = File(default=None),
+    planilha: Optional[UploadFile] = File(default=None),
 ):
     """
-    Análise completa: extrai fatos dos DXF, prepara conteúdo multimodal
-    de PNG/PDF, chama o Claude e devolve o JSON estruturado de itens.
+    Análise completa. Recebe até três arquivos nomeados (todos opcionais):
+    - arquivo_dxf : projeto em DXF
+    - arquivo_pdf : projeto em PDF
+    - planilha    : escopo em .xlsx
+    Mais o campo de texto `contexto` (JSON).
+    O modo (diagnostico/validacao) é decidido pela presença da planilha.
     """
-    # Parseia o JSON de contexto
     try:
         ctx: dict = json.loads(contexto)
     except json.JSONDecodeError as e:
@@ -81,59 +92,69 @@ async def analisar(
     fatos_por_arquivo: list[dict] = []
     blocos_multimodal: list[dict] = []
     arquivos_bytes: list[bytes] = []
+    planilha_escopo: str = ""
 
-    # Rastreia extensões para evitar redundância visual (PNG + PDF do mesmo desenho)
-    tem_pdf = any(f.filename.lower().endswith(".pdf") for f in arquivos)
-    tem_png = any(f.filename.lower().endswith(".png") for f in arquivos)
-    pular_png = tem_pdf and tem_png
-
-    for arquivo in arquivos:
-        nome = arquivo.filename.lower()
-        conteudo = await arquivo.read()
-        arquivos_bytes.append(conteudo)
-
-        if nome.endswith(".dxf"):
-            fatos, avisos = extrair_fatos(conteudo, arquivo.filename)
-            fatos_por_arquivo.append({"arquivo": arquivo.filename, **fatos})
-            avisos_gerais.extend(avisos)
-
-        elif nome.endswith(".pdf"):
-            dados_b64 = base64.standard_b64encode(conteudo).decode()
-            blocos_multimodal.append({
-                "type": "document",
-                "source": {
-                    "type": "base64",
-                    "media_type": "application/pdf",
-                    "data": dados_b64,
-                },
-            })
-
-        elif nome.endswith(".png") or nome.endswith(".jpg") or nome.endswith(".jpeg"):
-            if pular_png:
+    # ── DXF ──────────────────────────────────────────────────────────────────
+    if arquivo_dxf is not None:
+        conteudo = await arquivo_dxf.read()
+        if conteudo:
+            arquivos_bytes.append(conteudo)
+            if _termina_com(arquivo_dxf.filename, ".dxf"):
+                fatos, avisos = extrair_fatos(conteudo, arquivo_dxf.filename)
+                fatos_por_arquivo.append({"arquivo": arquivo_dxf.filename, **fatos})
+                avisos_gerais.extend(avisos)
+            else:
                 avisos_gerais.append(
-                    f"Imagem '{arquivo.filename}' ignorada: PDF do mesmo projeto já incluído "
-                    "(evitar redundância visual)."
+                    f"arquivo_dxf '{arquivo_dxf.filename}' ignorado: extensão não reconhecida."
                 )
-                continue
-            media_type = "image/png" if nome.endswith(".png") else "image/jpeg"
-            dados_b64 = base64.standard_b64encode(conteudo).decode()
-            blocos_multimodal.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": media_type,
-                    "data": dados_b64,
-                },
-            })
 
-        else:
-            avisos_gerais.append(f"Arquivo '{arquivo.filename}' ignorado: tipo não suportado.")
+    # ── PDF ──────────────────────────────────────────────────────────────────
+    if arquivo_pdf is not None:
+        conteudo = await arquivo_pdf.read()
+        if conteudo:
+            arquivos_bytes.append(conteudo)
+            if _termina_com(arquivo_pdf.filename, ".pdf"):
+                dados_b64 = base64.standard_b64encode(conteudo).decode()
+                blocos_multimodal.append({
+                    "type": "document",
+                    "source": {"type": "base64", "media_type": "application/pdf", "data": dados_b64},
+                })
+            elif _termina_com(arquivo_pdf.filename, ".png", ".jpg", ".jpeg"):
+                media_type = "image/png" if _termina_com(arquivo_pdf.filename, ".png") else "image/jpeg"
+                dados_b64 = base64.standard_b64encode(conteudo).decode()
+                blocos_multimodal.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": media_type, "data": dados_b64},
+                })
+            else:
+                avisos_gerais.append(
+                    f"arquivo_pdf '{arquivo_pdf.filename}' ignorado: extensão não reconhecida."
+                )
 
-    if not fatos_por_arquivo and not blocos_multimodal:
+    # ── Planilha XLSX ─────────────────────────────────────────────────────────
+    if planilha is not None:
+        conteudo = await planilha.read()
+        if conteudo:
+            arquivos_bytes.append(conteudo)
+            if _termina_com(planilha.filename, ".xlsx", ".xls"):
+                escopo, avisos_xlsx = extrair_planilha(conteudo, planilha.filename)
+                planilha_escopo = escopo
+                avisos_gerais.extend(avisos_xlsx)
+            else:
+                avisos_gerais.append(
+                    f"planilha '{planilha.filename}' ignorada: extensão não reconhecida (esperado .xlsx)."
+                )
+
+    if not fatos_por_arquivo and not blocos_multimodal and not planilha_escopo:
         raise HTTPException(
             status_code=400,
-            detail={"erro": "Nenhum arquivo válido recebido (DXF, PNG, PDF)."},
+            detail={"erro": "Nenhum arquivo válido recebido (DXF, PDF/PNG, XLSX)."},
         )
+
+    # ── Modo decidido pelo agente, não pelo Make ──────────────────────────────
+    modo = "validacao" if planilha_escopo else "diagnostico"
+    ctx["modo"] = modo
+    ctx["planilha_escopo"] = planilha_escopo
 
     # ── Cache ─────────────────────────────────────────────────────────────────
     chave = calcular_chave(arquivos_bytes, ctx)
@@ -155,11 +176,9 @@ async def analisar(
     except Exception as e:
         raise HTTPException(status_code=502, detail={"erro": f"Falha na chamada ao Claude: {e}"})
 
-    # Injeta avisos de infraestrutura
     avisos_claude = resultado.get("avisos", [])
     resultado["avisos"] = avisos_gerais + avisos_claude
 
-    # Salva no cache (falha silenciosa)
     salvar(chave, resultado)
 
     return JSONResponse(content=resultado)

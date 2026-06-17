@@ -139,6 +139,25 @@ def montar_conteudo(
         f"\n- Modo de análise: {modo.upper()}"
     )
 
+    if modo == "diagnostico":
+        partes.append(
+            "\nPOSTURA DO MODO DIAGNÓSTICO:"
+            "\nO escopo ainda é desconhecido — nenhuma planilha foi recebida. "
+            "Foque em DESCOBRIR: levante hipóteses de escopo com base no projeto, "
+            "gere perguntas ao cliente sobre o que será feito, e declare explicitamente "
+            "o que está sendo assumido. "
+            "NÃO preencha area_intervencao_m2 — deixe null (escopo indefinido)."
+        )
+    else:
+        partes.append(
+            "\nPOSTURA DO MODO VALIDAÇÃO:"
+            "\nA planilha de escopo é a FONTE DA VERDADE. O escopo já está definido. "
+            "Mude de postura: em vez de perguntar o que será feito, CONFIRME em campo "
+            "o que já está definido, aponte divergências entre planilha e projeto, "
+            "e liste o que falta para fechar o orçamento. "
+            "A área de intervenção, quando houver, vem da planilha — nunca redigite número."
+        )
+
     if fatos_por_arquivo:
         partes.append("\nFATOS EXTRAÍDOS DOS ARQUIVOS DXF:")
         for fatos in fatos_por_arquivo:
