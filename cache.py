@@ -28,9 +28,9 @@ def calcular_chave(
     for b in sorted(arquivos_bytes, key=len):  # ordem determinística por tamanho
         h.update(b)
     campos_chave = {
-        "diretrizes": sorted(contexto.get("diretrizes", [])),
-        "dossie_obra": contexto.get("dossie_obra", ""),
-        "itens_pendentes": contexto.get("itens_pendentes", []),
+        "diretrizes": sorted(contexto.get("diretrizes") or []),
+        "dossie_obra": contexto.get("dossie_obra") or "",
+        "itens_pendentes": contexto.get("itens_pendentes") or [],
         "modo": contexto.get("modo", "diagnostico"),
         "tipo_obra": contexto.get("tipo_obra", "indefinido"),
         "modelo": contexto.get("modelo", ""),

@@ -111,10 +111,10 @@ def montar_conteudo(
     id_orcamento = contexto.get("id_orcamento", "")
     modo = contexto.get("modo", "diagnostico")
     tipo_obra = contexto.get("tipo_obra", "indefinido")
-    diretrizes: list[str] = contexto.get("diretrizes", [])
-    itens_pendentes: list[dict] = contexto.get("itens_pendentes", [])
-    planilha_escopo: str = contexto.get("planilha_escopo", "")
-    dossie_obra: str = contexto.get("dossie_obra", "")
+    diretrizes: list[str] = contexto.get("diretrizes") or []
+    itens_pendentes: list[dict] = contexto.get("itens_pendentes") or []
+    planilha_escopo: str = contexto.get("planilha_escopo") or ""
+    dossie_obra: str = contexto.get("dossie_obra") or ""
 
     partes: list[str] = [_INSTRUCAO_BASE]
 
